@@ -105,6 +105,11 @@ test('works with external stylesheets (global only)', async t => {
   t.snapshot(code)
 })
 
+test('does not transpile nested style tags', async t => {
+  const { code } = await transform('./fixtures/nested-style-tags.js')
+  t.snapshot(code)
+})
+
 test('server rendering', t => {
   function App() {
     const color = 'green'

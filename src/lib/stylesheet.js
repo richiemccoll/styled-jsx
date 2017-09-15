@@ -40,9 +40,7 @@ function sheetForTag(tag) {
 }
 
 const isBrowser = typeof window !== 'undefined'
-const isDev =
-  process.env.NODE_ENV === 'development' || !process.env.NODE_ENV // (x => (x === 'development') || !x)(process.env.NODE_ENV)
-const isTest = process.env.NODE_ENV === 'test'
+const isProd = process.env.NODE_ENV === 'production'
 
 const oldIE = (() => {
   if (isBrowser) {
@@ -52,10 +50,10 @@ const oldIE = (() => {
   }
 })()
 
-function makeStyleTag() {
+function makeStyleTag(name) {
   let tag = document.createElement('style')
   tag.type = 'text/css'
-  tag.setAttribute('data-emotion', '')
+  tag.setAttribute(`data-${name}`, '')
   tag.appendChild(document.createTextNode(''))
   ;(document.head || document.getElementsByTagName('head')[0]).appendChild(tag)
   return tag
@@ -64,11 +62,14 @@ function makeStyleTag() {
 export default class StyleSheet {
   constructor(
     {
-      speedy = !isDev && !isTest,
+      name = 'stylesheet',
+      speedy = isProd,
       maxLength = isBrowser && oldIE ? 4000 : 65000
     } = {}
   ) {
-    this.isSpeedy = speedy // the big drawback here is that the css won't be editable in devtools
+    this.name = name
+    // the big drawback here is that the css won't be editable in devtools and can't add source maps.
+    this.isSpeedy = speedy
     this.sheet = undefined
     this.tags = []
     this.maxLength = maxLength
@@ -83,26 +84,25 @@ export default class StyleSheet {
   }
   getTagForRule(index) {
     const tagIndex = Math.floor(index / this.maxLength)
-    const tag = this.tags[tagIndex]
     if (undefined === this.tags[tagIndex]) {
       throw new Error('tag not found')
     }
     return this.tags[tagIndex]
   }
   getRuleIndex(index) {
-    const tag = getTagForRule(index)
-    const ruleIndex = index - (tagIndex * this.maxLength)
-    if (!tag[ruleIndex]) {
-      throw new Error('rule not found')
+    if (this.tags.length === 1) {
+      return index
     }
-    return tag[ruleIndex]
+
+    const tagIndex = Math.floor(index / this.maxLength)
+    return index - (tagIndex * this.maxLength)
   }
   inject() {
     if (this.injected) {
       throw new Error('already injected!')
     }
     if (isBrowser) {
-      this.tags[0] = makeStyleTag()
+      this.tags[0] = makeStyleTag(this.name)
     } else {
       // server side 'polyfill'. just enough behavior to be useful.
       this.sheet = {
@@ -133,48 +133,62 @@ export default class StyleSheet {
         rule.indexOf('@import') !== -1 ? 0 : sheet.cssRules.length
       )
     } catch (e) {
-      if (isDev) {
+      if (!isProd) {
         // might need beter dx for this
         console.warn('illegal rule', rule) // eslint-disable-line no-console
       }
     }
   }
   insert(rule) {
-    if (isBrowser) {
-      // this is the ultrafast version, works across browsers
-      if (this.isSpeedy && this.getSheet().insertRule) {
-        this._insert(rule)
-      } else {
-        // more browser weirdness. I don't even know
-        // else if(this.tags.length > 0 && this.tags::last().styleSheet) {
-        //   this.tags::last().styleSheet.cssText+= rule
-        // }
-        if (rule.indexOf('@import') !== -1) {
-          const tag = last(this.tags)
-          tag.insertBefore(document.createTextNode(rule), tag.firstChild)
-        } else {
-          last(this.tags).appendChild(document.createTextNode(rule))
-        }
-      }
-    } else {
+    this.ctr++
+
+    if (!isBrowser) {
       // server side is pretty simple
       this.sheet.insertRule(
         rule,
         rule.indexOf('@import') !== -1 ? 0 : this.sheet.cssRules.length
       )
+      return this.ctr - 1
     }
 
-    this.ctr++
-    if (isBrowser && this.ctr % this.maxLength === 0) {
-      this.tags.push(makeStyleTag())
+    // this is the ultrafast version, works across browsers
+    const sheet = this.getSheet()
+    if (this.isSpeedy && sheet.insertRule) {
+      // this weirdness for perf, and chrome's weird bug
+      // https://stackoverflow.com/questions/20007992/chrome-suddenly-stopped-accepting-insertrule
+      try {
+        sheet.insertRule(
+          rule,
+          rule.indexOf('@import') !== -1 ? 0 : sheet.cssRules.length
+        )
+      } catch (e) {
+        if (!isProd) {
+          // might need beter dx for this
+          console.warn('illegal rule', rule) // eslint-disable-line no-console
+        }
+      }
+    } else {
+      const tag = last(this.tags)
+      if (rule.indexOf('@import') !== -1) {
+        tag.insertBefore(document.createTextNode(rule), tag.firstChild)
+      } else {
+        tag.appendChild(document.createTextNode(rule))
+      }
     }
+
+    if (this.ctr % this.maxLength === 0) {
+      this.tags.push(makeStyleTag(this.name))
+    }
+
     return this.ctr - 1
   }
   replace(index, rule) {
-    const tag = getTagForRule(index)
+    const tag = this.getTagForRule(index)
     const sheet = this.getSheet(tag)
-    const ruleIndex = getRuleIndex(index)
+    const ruleIndex = this.getRuleIndex(index)
+    console.log(index, ruleIndex, tag, tag[ruleIndex])
     if (this.isSpeedy && sheet.insertRule) {
+      rule = rule.trim() ? rule : '#___stylesheet-empty-rule____{}'
       sheet.deleteRule(ruleIndex)
       sheet.insertRule(
         rule,
@@ -186,13 +200,7 @@ export default class StyleSheet {
     return index
   }
   delete(index) {
-    const tag = getTagForRule(index)
-    const sheet = this.getSheet(tag)
-    if (this.isSpeedy && sheet.insertRule) {
-      this.replace(index, '#_stylesheet-deleted-rule{}')
-    } else {
-      this.replace(index, '')
-    }
+    this.replace(index, '')
   }
   flush() {
     if (isBrowser) {

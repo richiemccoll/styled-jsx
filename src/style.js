@@ -1,5 +1,5 @@
 import { Component } from 'react'
-import StyleSheetRegistry from './stylesheet'
+import StyleSheetRegistry from './stylesheet-registry'
 
 let components = []
 

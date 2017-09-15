@@ -1,9 +1,14 @@
 import hashString from 'string-hash'
-import StyleSheet from './lib/stylesheet'
+import DefaultStyleSheet from './lib/stylesheet'
 
 export default class StyleSheetRegistry {
-  constructor(StyleSheet = StyleSheet, speedy = false) {
+  constructor({
+    StyleSheet,
+    speedy,
+  } = { StyleSheet: DefaultStyleSheet, speedy: false }) {
     this._sheet = new StyleSheet({ speedy })
+    this._sheet.inject()
+    this._isBrowser = typeof window !== 'undefined'
     this._fromServer = undefined
     this._indices = {}
     this._instancesCounts = {}
@@ -35,9 +40,9 @@ export default class StyleSheetRegistry {
       this._sheet.speedy(this._isSpeedy)
     }
 
-    if (!this._fromServer) {
+    if (this._isBrowser && !this._fromServer) {
       this._fromServer = selectFromServer()
-      this._instancesCount = Object.keys(this._fromServer).reduce((acc, tagName) => {
+      this._instancesCounts = Object.keys(this._fromServer).reduce((acc, tagName) => {
         acc[tagName] = 0
         return acc
       }, {})
@@ -45,35 +50,26 @@ export default class StyleSheetRegistry {
 
     const { styleId, rules } = this.getIdAndCss(props)
 
-    if (styleId in this._instancesCount) {
-      this._instancesCount[styleId] += 1
+    if (styleId in this._instancesCounts) {
+      this._instancesCounts[styleId] += 1
       return
     }
 
-    this._instancesCount[styleId] = 1
+    this._instancesCounts[styleId] = 1
 
     if (!useSingleSheet(props.css)) {
       this._indices[styleId] = [this._sheet.insert(rules[0])]
       return
     }
 
-    const length = this._sheet.length
-
-    const indices = rules.map(rule => this._sheet.insert(rule))
-    // Insertion interval
-    this._indices[styleId] = [
-      // Start
-      indices[0],
-      // End
-      indices.slice(-1)
-    ]
+    this._indices[styleId] = rules.map(rule => this._sheet.insert(rule))
   }
 
   remove(props) {
     const { styleId } = this.getIdAndCss(props)
-    this._instancesCount[styleId] -= 1
-    if (this._instancesCount[styleId] < 1) {
-      delete this._instancesCount[styleId]
+    this._instancesCounts[styleId] -= 1
+    if (this._instancesCounts[styleId] < 1) {
+      delete this._instancesCounts[styleId]
       const indices = this._indices[styleId]
       delete this._indices[styleId]
       indices.forEach(index => this._sheet.delete(index))
@@ -83,20 +79,20 @@ export default class StyleSheetRegistry {
   replace(props, nextProps) {
     if (!useSingleSheet(props.css)) {
       const { styleId } = this.getIdAndCss(props)
-      if (this._instancesCount[styleId] === 1) {
+      if (this._instancesCounts[styleId] === 1) {
+        delete this._instancesCounts[styleId]
         const index = this._indices[styleId][0]
         delete this._indices[styleId]
-        delete this._instancesCount[styleId]
         const next = this.getIdAndCss(nextProps)
         // If it's already been replaced just remove the old one.
         if (this._indices[next.styleId]) {
           this._sheet.delete(index)
-          this._instancesCount[next.styleId] += 1
+          this._instancesCounts[next.styleId] += 1
         } else {
           // Never been inserted, replace the current tag content with the new one.
           this._sheet.replace(index, next.rules[0])
           this._indices[next.styleId] = index
-          this._instancesCount[next.styleId] = 1
+          this._instancesCounts[next.styleId] = 1
         }
         return
       }
@@ -110,7 +106,7 @@ export default class StyleSheetRegistry {
 // export default class StyleSheet {
 //   constructor() {
 //     this._fromServer = null
-//     this._instancesCount = {}
+//     this._instancesCounts = {}
 //     this._tags = {}
 //     this._sheet = null
 //     this._isBrowser = typeof window !== 'undefined'
@@ -143,7 +139,7 @@ export default class StyleSheetRegistry {
 //     if (!this._fromServer) {
 //       this._tags = selectFromServer()
 //       this._fromServer = this._tags
-//       this._instancesCount = Object.keys(this._tags).reduce((acc, tagName) => {
+//       this._instancesCounts = Object.keys(this._tags).reduce((acc, tagName) => {
 //         acc[tagName] = 0
 //         return acc
 //       }, {})
@@ -151,12 +147,12 @@ export default class StyleSheetRegistry {
 
 //     const { styleId, rules } = this.getIdAndCss(props)
 
-//     if (styleId in this._instancesCount) {
-//       this._instancesCount[styleId] += 1
+//     if (styleId in this._instancesCounts) {
+//       this._instancesCounts[styleId] += 1
 //       return
 //     }
 
-//     this._instancesCount[styleId] = 1
+//     this._instancesCounts[styleId] = 1
 
 //     if (!useSingleSheet(props.css)) {
 //       this._tags[styleId] = makeStyleTag(rules[0])
@@ -185,9 +181,9 @@ export default class StyleSheetRegistry {
 //       return
 //     }
 //     const { styleId } = this.getIdAndCss(props)
-//     this._instancesCount[styleId] -= 1
-//     if (this._instancesCount[styleId] < 1) {
-//       delete this._instancesCount[styleId]
+//     this._instancesCounts[styleId] -= 1
+//     if (this._instancesCounts[styleId] < 1) {
+//       delete this._instancesCounts[styleId]
 //       const t = this._tags[styleId]
 //       delete this._tags[styleId]
 //       if (
@@ -212,20 +208,20 @@ export default class StyleSheetRegistry {
 //     }
 //     if (!useSingleSheet(props.css)) {
 //       const { styleId } = this.getIdAndCss(props)
-//       if (this._instancesCount[styleId] === 1) {
+//       if (this._instancesCounts[styleId] === 1) {
 //         const t = this._tags[styleId]
 //         delete this._tags[styleId]
-//         delete this._instancesCount[styleId]
+//         delete this._instancesCounts[styleId]
 //         const next = this.getIdAndCss(nextProps)
 //         // If it's already been replaced just remove the old one.
 //         if (this._tags[next.styleId]) {
 //           t.parentNode.removeChild(t)
-//           this._instancesCount[next.styleId] += 1
+//           this._instancesCounts[next.styleId] += 1
 //         } else {
 //           // Never been inserted, replace the current tag content with the new one.
 //           t.textContent = next.rules[0]
 //           this._tags[next.styleId] = t
-//           this._instancesCount[next.styleId] = 1
+//           this._instancesCounts[next.styleId] = 1
 //         }
 //         return
 //       }
